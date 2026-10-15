@@ -135,7 +135,7 @@
   .moves {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 5px;
   }
   button {
     font: inherit;
@@ -148,7 +148,13 @@
   }
   button:hover { background: var(--btn-hover); }
   button:active { transform: translateY(1px); }
-  .moves button { font-size: 1.1rem; font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: default; transform: none; }
+  .moves button { font-size: 0.95rem; font-weight: 600; padding: 3px 0; }
+  .history .current {
+    background: var(--accent);
+    color: var(--accent-text);
+    border-radius: 4px;
+  }
   .actions { display: grid; gap: 8px; }
   .turns {
     display: grid;
@@ -204,8 +210,7 @@
       </div>
       <button id="undo">Annuler le dernier mouvement</button>
       <button id="scramble" class="primary">Mélanger</button>
-      <button id="solve">Résoudre (afficher la solution)</button>
-      <button id="reset">Cube résolu</button>
+      <button id="solve">Résoudre</button>
     </div>
     <div>
       <div class="label">Mouvements joués (<span id="count">0</span>)</div>
@@ -513,7 +518,7 @@
 
   // Un bouton désigne une face telle qu'elle est affichée : on la traduit en face absolue.
   function play(rel) {
-    if (viewAnimating || drag) return;
+    if (solving || viewAnimating || drag) return;
     const abs = faceAt(frame, rel[0]) + rel.slice(1);
     history.push({ type: "move", label: rel, tokens: [rel], abs });
     queue.push(abs);
@@ -522,7 +527,7 @@
   }
 
   function undo() {
-    if (viewAnimating || drag || history.length === 0) return;
+    if (solving || viewAnimating || drag || history.length === 0) return;
     const e = history.pop();
     if (e.type === "move") {
       queue.push(invert(e.abs));
@@ -534,6 +539,7 @@
   }
 
   function scramble() {
+    if (solving) return;
     buildCube();
     resetView();
     resize();
@@ -556,16 +562,6 @@
       "Mélange (jaune en haut, vert devant) : " + seq.join(" ");
   }
 
-  function reset() {
-    buildCube();
-    resetView();
-    resize();
-    scrambleSeq = [];
-    history = [];
-    showHistory();
-    document.getElementById("scrambleText").textContent = "";
-  }
-
   // Solution = mélange puis historique (rotations comprises), inversés et lus à l'envers.
   // Elle se joue à partir de la vue actuelle.
   function solution() {
@@ -573,16 +569,58 @@
     return reduce(all.reverse().map(invert));
   }
 
-  function showSolution() {
+  // Joue la solution à l'écran, mouvement par mouvement, jusqu'au cube résolu.
+  // Le mouvement en cours est surligné dans la liste.
+  let solving = false;
+  function solve() {
+    if (solving || animating || queue.length || viewAnimating || drag) return;
     const sol = solution();
-    const faceQuarters = sol.reduce((n, m) =>
-      n + (m[0] === m[0].toUpperCase() ? (m.endsWith(SQUARE) ? 2 : 1) : 0), 0);
-    document.getElementById("solution").textContent =
-      sol.length ? sol.join(" ") : "Le cube est déjà résolu.";
-    document.getElementById("solutionCount").textContent = faceQuarters;
     const box = document.getElementById("solutionBox");
+    const list = document.getElementById("solution");
+    document.getElementById("solutionCount").textContent = sol.reduce((n, m) =>
+      n + (m[0] === m[0].toUpperCase() ? (m.endsWith(SQUARE) ? 2 : 1) : 0), 0);
+    list.innerHTML = "";
     box.hidden = false;
     box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (!sol.length) { list.textContent = "Le cube est déjà résolu."; return; }
+
+    const spans = sol.map(m => {
+      const s = document.createElement("span");
+      s.textContent = m;
+      list.append(s, " ");
+      return s;
+    });
+    // Un X² se joue en deux quarts de tour.
+    const steps = [];
+    sol.forEach((m, i) => {
+      const sq = m.endsWith(SQUARE), tok = sq ? m[0] : m;
+      for (let r = 0; r < (sq ? 2 : 1); r++) steps.push({ tok, i });
+    });
+
+    solving = true;
+    document.querySelectorAll(".panel button").forEach(b => { b.disabled = true; });
+    let k = 0;
+    const next = () => {
+      spans.forEach((s, j) => s.classList.toggle("current", k < steps.length && j === steps[k].i));
+      if (k === steps.length) return finish();
+      const { tok } = steps[k++];
+      if (TOKENS[tok]) {
+        rotateWhole(tok, () => { frame = computeFrame(view); settledView = view; next(); });
+      } else {
+        animating = true;
+        animate(faceAt(frame, tok[0]) + tok.slice(1), () => { animating = false; next(); });
+      }
+    };
+    const finish = () => {
+      solving = false;
+      document.querySelectorAll(".panel button").forEach(b => { b.disabled = false; });
+      scrambleSeq = [];
+      history = [];
+      showHistory();
+      box.hidden = false;
+      document.getElementById("scrambleText").textContent = "";
+    };
+    next();
   }
 
   function showHistory() {
@@ -688,7 +726,7 @@
   const LOCK_THRESHOLD = 6;
   let drag = null;
   scene.addEventListener("pointerdown", e => {
-    if (viewAnimating) return;
+    if (solving || viewAnimating) return;
     drag = { x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY, mode: null };
     scene.setPointerCapture(e.pointerId);
     scene.classList.add("dragging");
@@ -723,26 +761,25 @@
   scene.addEventListener("pointerup", endDrag);
   scene.addEventListener("pointercancel", endDrag);
   scene.addEventListener("dblclick", () => {
-    if (!viewAnimating && !drag) animateView(initialView(), settle);
+    if (!solving && !viewAnimating && !drag) animateView(initialView(), settle);
   });
 
-  // Quart de tour du cube entier : ← → autour de l'axe vertical (y′, y),
-  // ↑ ↓ autour de l'axe des faces latérales (x, x′).
-  // Pour chaque flèche : l'axe, et la face qui doit venir devant.
-  const TURNS = {
-    ArrowLeft:  { axis: "U", front: fr => fr.R },        // y
-    ArrowRight: { axis: "U", front: fr => neg(fr.R) },   // y′
-    ArrowUp:    { axis: "R", front: fr => neg(fr.U) },   // x
-    ArrowDown:  { axis: "R", front: fr => fr.U },        // x′
-  };
-  function turnView(key) {
-    if (viewAnimating || drag) return;
-    const { axis, front } = TURNS[key];
-    const a = toCss(relVec(frame, axis)), want = front(frame);
+  // Anime un quart de tour du cube entier (x, y, z ou leurs inverses), relatif à la vue.
+  function rotateWhole(tok, done) {
+    const key = M => M.flat().join(",");
+    const want = key(mulMM(frameMatrix(frame), transpose(TOKENS[tok])));
+    const axis = toCss(relVec(frame, { x: "R", y: "U", z: "F" }[tok[0]]));
     const target = [Math.PI / 2, -Math.PI / 2]
-      .map(t => mulMM(view, rotation(a, t)))
-      .find(V => dot(computeFrame(V).F, want) === 1);
-    animateView(target, settle);
+      .map(t => mulMM(view, rotation(axis, t)))
+      .find(V => key(frameMatrix(computeFrame(V))) === want);
+    animateView(target, done);
+  }
+
+  // Flèches : ← → autour de l'axe vertical, ↑ ↓ autour de l'axe des faces latérales.
+  const TURNS = { ArrowLeft: "y", ArrowRight: "y" + PRIME, ArrowUp: "x", ArrowDown: "x" + PRIME };
+  function turnView(key) {
+    if (solving || viewAnimating || drag) return;
+    rotateWhole(TURNS[key], settle);
   }
 
   // ---------- Boutons et clavier ----------
@@ -770,8 +807,7 @@
   }
   document.getElementById("undo").addEventListener("click", undo);
   document.getElementById("scramble").addEventListener("click", scramble);
-  document.getElementById("solve").addEventListener("click", showSolution);
-  document.getElementById("reset").addEventListener("click", reset);
+  document.getElementById("solve").addEventListener("click", solve);
 
   document.addEventListener("keydown", e => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
