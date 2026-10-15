@@ -45,14 +45,15 @@
   }
 
   * { box-sizing: border-box; }
-  html, body { margin: 0; height: 100%; }
+  html, body { margin: 0; }
+  /* Centrage par margin: auto : si le contenu dépasse l'écran (téléphone),
+     il déborde vers le bas et reste accessible en faisant défiler. */
   body {
     background: var(--bg);
     color: var(--text);
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     display: flex;
-    align-items: center;
-    justify-content: center;
+    min-height: 100vh;
     padding: 16px;
   }
   .app {
@@ -60,14 +61,17 @@
     gap: 24px;
     align-items: center;
     max-width: 100%;
+    margin: auto;
   }
 
   /* ---------- Scène 3D ---------- */
   .scene {
-    width: min(480px, calc(100vw - 32px));
-    height: min(480px, calc(100vw - 32px));
+    --side: min(480px, calc(100vw - 32px), calc(100vh - 32px));
+    width: var(--side);
+    height: var(--side);
     perspective: 1400px;
     position: relative;
+    flex-shrink: 0;
     cursor: grab;
     touch-action: none;
     user-select: none;
@@ -96,6 +100,7 @@
     left: calc(var(--s) / -2);
     top: calc(var(--s) / -2);
     pointer-events: none;
+    -webkit-backface-visibility: hidden;
     backface-visibility: hidden;
   }
   .marker svg { display: block; width: 100%; height: 100%; }
@@ -116,12 +121,16 @@
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 14px;
-    padding: 18px;
+    padding: 16px;
     width: 260px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 12px;
+    /* Sur ordinateur, le panneau tient dans la hauteur de l'écran et défile à l'intérieur. */
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
   }
+  .hint summary { cursor: pointer; }
   h1 { font-size: 1.15rem; margin: 0; }
   .moves {
     display: grid;
@@ -134,7 +143,7 @@
     background: var(--btn);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 9px 0;
+    padding: 7px 0;
     cursor: pointer;
   }
   button:hover { background: var(--btn-hover); }
@@ -174,7 +183,8 @@
 
   @media (max-width: 820px) {
     .app { flex-direction: column; }
-    .panel { width: min(480px, calc(100vw - 32px)); }
+    .scene { --side: min(480px, calc(100vw - 32px)); }
+    .panel { width: min(480px, calc(100vw - 32px)); max-height: none; overflow: visible; }
   }
 </style>
 </head>
@@ -206,11 +216,12 @@
       <div class="label">Solution (<span id="solutionCount">0</span> quarts de tour)</div>
       <div class="history" id="solution"></div>
     </div>
-    <p class="hint">
+    <details class="hint">
+      <summary>Aide</summary>
       Les lettres désignent les faces telles qu'elles sont affichées (repères sur les centres).<br>
       Glisser horizontalement : rotation autour de l'axe vertical du cube ; verticalement : autour de l'axe passant par les faces latérales. Chaque changement d'orientation est noté x, y ou z. Double-clic pour revenir à la vue de départ.<br>
       Clavier : U L R D F B, avec Maj pour le sens inverse ; flèches pour tourner le cube d'un quart de tour ; Retour arrière pour annuler.
-    </p>
+    </details>
   </div>
 </div>
 
@@ -569,7 +580,9 @@
     document.getElementById("solution").textContent =
       sol.length ? sol.join(" ") : "Le cube est déjà résolu.";
     document.getElementById("solutionCount").textContent = faceQuarters;
-    document.getElementById("solutionBox").hidden = false;
+    const box = document.getElementById("solutionBox");
+    box.hidden = false;
+    box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
   function showHistory() {
